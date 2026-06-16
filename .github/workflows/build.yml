@@ -9,25 +9,24 @@ jobs:
   build:
     name: Build APK
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Find and unzip project
+      - name: Find and extract project zip
         run: |
-          echo "=== Repo contents ==="
-          ls -la
-          ZIP=$(find . -maxdepth 2 -name "*.zip" | head -1)
-          echo "Unzipping: $ZIP"
+          ZIP=$(find . -maxdepth 3 -name "*.zip" | head -1)
+          echo "Found zip: $ZIP"
+          mkdir -p extracted
           unzip -q "$ZIP" -d extracted/
-          echo "=== Extracted ==="
+          echo "Extracted contents:"
           ls extracted/
-          ROOT=$(find extracted/ -name "settings.gradle" | head -1 | xargs dirname)
+          # Find root build.gradle (not in app/)
+          ROOT=$(find extracted/ -name "build.gradle" ! -path "*/app/*" | head -1 | xargs dirname)
           echo "Project root: $ROOT"
           mkdir -p $GITHUB_WORKSPACE/project
           cp -r "$ROOT/." $GITHUB_WORKSPACE/project/
-          echo "=== Project files ==="
+          echo "Project files:"
           ls $GITHUB_WORKSPACE/project/
 
       - name: Set up JDK 17
@@ -39,17 +38,10 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Download Gradle wrapper JAR
-        run: |
-          mkdir -p $GITHUB_WORKSPACE/project/gradle/wrapper
-          curl -fsSL "https://github.com/gradle/gradle/raw/v8.2.0/gradle/wrapper/gradle-wrapper.jar" \
-            -o $GITHUB_WORKSPACE/project/gradle/wrapper/gradle-wrapper.jar
-          echo "Wrapper JAR size: $(wc -c < $GITHUB_WORKSPACE/project/gradle/wrapper/gradle-wrapper.jar) bytes"
-
       - name: Make gradlew executable
         run: chmod +x $GITHUB_WORKSPACE/project/gradlew
 
-      - name: Cache Gradle
+      - name: Cache Gradle packages
         uses: actions/cache@v4
         with:
           path: |
@@ -61,24 +53,14 @@ jobs:
       - name: Build Debug APK
         run: |
           cd $GITHUB_WORKSPACE/project
-          ./gradlew assembleDebug --stacktrace --no-daemon
+          ./gradlew assembleDebug --stacktrace 2>&1
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: SMZLive-APK
+          name: SMZLive-v19.08-APK
           path: ${{ github.workspace }}/project/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
 
-      - name: Create Release
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ github.run_number }}
-          name: SMZ Live v${{ github.run_number }}
-          files: ${{ github.workspace }}/project/app/build/outputs/apk/debug/app-debug.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Done
-        run: echo "✅ SMZ Live APK built successfully!"
+      - name: Build success
+        run: echo "✅ SMZ Live v19.08 APK built successfully!"
