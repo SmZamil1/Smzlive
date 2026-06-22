@@ -77,7 +77,20 @@ jobs:
             echo "    See the comment above this step for keystore setup."
           fi
 
+      - name: Build Debug APK
+        run: |
+          cd "$PROJECT_DIR"
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Smizo-debug-apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+
       - name: Build Release APK
+        if: ${{ secrets.SMIZO_KEYSTORE_BASE64 != '' }}
         env:
           SMIZO_KEYSTORE_PATH: ${{ github.workspace }}/smizo-release.jks
           SMIZO_KEYSTORE_PASSWORD: ${{ secrets.SMIZO_KEYSTORE_PASSWORD }}
@@ -88,6 +101,7 @@ jobs:
           ./gradlew assembleRelease --stacktrace
 
       - name: Upload Release APK
+        if: ${{ secrets.SMIZO_KEYSTORE_BASE64 != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: Smizo-release-apk
@@ -95,4 +109,4 @@ jobs:
           retention-days: 30
 
       - name: Build success
-        run: echo "✅ Smizo release APK built successfully!"
+        run: echo "✅ Smizo APK build finished!"
