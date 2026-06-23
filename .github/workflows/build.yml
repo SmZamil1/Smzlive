@@ -66,15 +66,18 @@ jobs:
       # Then base64-encode it for the secret:
       #   base64 -w0 smizo-release.jks > smizo-release.b64.txt
       - name: Decode keystore
+        id: keystore
         env:
           SMIZO_KEYSTORE_BASE64: ${{ secrets.SMIZO_KEYSTORE_BASE64 }}
         run: |
           if [ -n "$SMIZO_KEYSTORE_BASE64" ]; then
             echo "$SMIZO_KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/smizo-release.jks"
+            echo "has_keystore=true" >> "$GITHUB_OUTPUT"
           else
             echo "⚠️  No SMIZO_KEYSTORE_BASE64 secret set."
-            echo "    assembleRelease will fail without a signing config."
+            echo "    Release build will be skipped until it's configured."
             echo "    See the comment above this step for keystore setup."
+            echo "has_keystore=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build Debug APK
@@ -90,7 +93,7 @@ jobs:
           retention-days: 30
 
       - name: Build Release APK
-        if: ${{ secrets.SMIZO_KEYSTORE_BASE64 != '' }}
+        if: steps.keystore.outputs.has_keystore == 'true'
         env:
           SMIZO_KEYSTORE_PATH: ${{ github.workspace }}/smizo-release.jks
           SMIZO_KEYSTORE_PASSWORD: ${{ secrets.SMIZO_KEYSTORE_PASSWORD }}
@@ -101,7 +104,7 @@ jobs:
           ./gradlew assembleRelease --stacktrace
 
       - name: Upload Release APK
-        if: ${{ secrets.SMIZO_KEYSTORE_BASE64 != '' }}
+        if: steps.keystore.outputs.has_keystore == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: Smizo-release-apk
