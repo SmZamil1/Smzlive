@@ -1,17 +1,77 @@
-name: Build Smizo Release APK
+name: Build APK from ZIP
 
 on:
-  push:
-    branches: [ main, master ]
   workflow_dispatch:
+    inputs:
+      zip_url:
+        description: 'Direct download URL of your source zip'
+        required: true
+        type: string
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Download source zip
+        run: |
+          echo "Downloading zip from: ${{ github.event.inputs.zip_url }}"
+          curl -L "${{ github.event.inputs.zip_url }}" -o source.zip
+          echo "Zip size: $(ls -lh source.zip)"
+
+      - name: Extract zip
+        run: |
+          unzip -o source.zip
+          # If zip has a subfolder, move contents up to root
+          INNER=$(unzip -Z1 source.zip | head -1 | cut -d/ -f1)
+          if [ -d "$INNER" ] && [ "$INNER" != "app" ] && [ "$INNER" != "." ]; then
+            echo "Moving contents of $INNER/ to root"
+            shopt -s dotglob
+            mv "$INNER"/* . 2>/dev/null || true
+            rm -rf "$INNER"
+          fi
+          echo "=== Root after extract ==="
+          ls -la
+          echo "=== app/ ===" && ls app/ 2>/dev/null || echo "no app dir"
+
+      - name: Write Gradle wrapper
+        run: |
+          mkdir -p gradle/wrapper
+
+          cat > settings.gradle << 'EOF'
+pluginManagement {
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories { google(); mavenCentral() }
+}
+rootProject.name = "Smizo"
+include ':app'
+EOF
+
+          cat > gradle/wrapper/gradle-wrapper.properties << 'EOF'
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+distributionUrl=https\://services.gradle.org/distributions/gradle-8.2-bin.zip
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
+EOF
+
+          # Download real wrapper jar
+          curl -sL "https://github.com/gradle/gradle/raw/v8.2.0/gradle/wrapper/gradle-wrapper.jar" \
+            -o gradle/wrapper/gradle-wrapper.jar
+          echo "Wrapper jar: $(ls -lh gradle/wrapper/gradle-wrapper.jar)"
+
+          # Write gradlew
+          cat > gradlew << 'EOF'
+#!/bin/sh
+exec java ${JAVA_OPTS:-} \
+  -classpath "$(dirname $0)/gradle/wrapper/gradle-wrapper.jar" \
+  org.gradle.wrapper.GradleWrapperMain "$@"
+EOF
+          chmod +x gradlew
+          echo "Gradle wrapper ready"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -22,32 +82,14 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Gradle wrapper if missing
+      - name: Decode Keystore
         run: |
-          if [ ! -f "gradlew" ]; then
-            echo "gradlew not found — generating with Gradle 8.2"
-            wget -q https://services.gradle.org/distributions/gradle-8.2-bin.zip -O /tmp/gradle.zip
-            unzip -q /tmp/gradle.zip -d /tmp/gradle-install
-            /tmp/gradle-install/gradle-8.2/bin/gradle wrapper --gradle-version 8.2
-          fi
-          chmod +x gradlew
-          echo "gradlew ready"
-
-      - name: Show repo structure
-        run: |
-          echo "=== Root files ==="
-          ls -la
-          echo "=== App files ==="
-          ls -la app/ || echo "no app dir"
-
-      - name: Decode Keystore from secret
-        run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > /tmp/smizo_keystore.jks
-          echo "Keystore size: $(ls -lh /tmp/smizo_keystore.jks)"
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > /tmp/smizo.jks
+          echo "Keystore: $(ls -lh /tmp/smizo.jks)"
 
       - name: Build Release APK
         env:
-          SMIZO_KEYSTORE_PATH: /tmp/smizo_keystore.jks
+          SMIZO_KEYSTORE_PATH: /tmp/smizo.jks
           SMIZO_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           SMIZO_KEY_ALIAS:         ${{ secrets.KEY_ALIAS }}
           SMIZO_KEY_PASSWORD:      ${{ secrets.KEY_PASSWORD }}
@@ -57,31 +99,15 @@ jobs:
             --stacktrace \
             -Dorg.gradle.jvmargs="-Xmx2g"
 
-      - name: Rename APK
+      - name: Collect APK
         run: |
           mkdir -p out
-          cp app/build/outputs/apk/release/app-release.apk out/Smizo-v25-release.apk
-          echo "APK size: $(ls -lh out/Smizo-v25-release.apk)"
+          cp app/build/outputs/apk/release/app-release.apk out/Smizo-release.apk
+          echo "APK: $(ls -lh out/Smizo-release.apk)"
 
-      - name: Upload APK as artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Smizo-v25-release-apk
-          path: out/Smizo-v25-release.apk
+          name: Smizo-release-apk
+          path: out/Smizo-release.apk
           retention-days: 60
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v25.0
-          name: "Smizo v25.0 — Ultimate Live TV"
-          body: |
-            ## Smizo v25.0
-            - ⚡ Faster stream loading (low-network optimised)
-            - 📺 Telegram-style navigation
-            - ⚽ FIFA World Cup 2026 tab
-            - 🚫 PiP removed completely
-            - 📦 App size 5.8MB+
-          files: out/Smizo-v25-release.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
