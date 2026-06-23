@@ -1,4 +1,4 @@
-name: Build Smizo APK
+name: Build Smizo Release APK
 
 on:
   push:
@@ -7,106 +7,71 @@ on:
 
 jobs:
   build:
-    name: Build Release APK
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
-      - name: Locate project root (supports a zipped project or raw files)
-        run: |
-          if [ -f "build.gradle" ] || [ -f "settings.gradle" ]; then
-            echo "Project files already at repo root."
-            echo "PROJECT_DIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
-          else
-            ZIP=$(find . -maxdepth 3 -iname "*.zip" | head -1)
-            if [ -z "$ZIP" ]; then
-              echo "No build.gradle at root and no zip found — nothing to build."
-              exit 1
-            fi
-            echo "Found zip: $ZIP"
-            mkdir -p extracted
-            unzip -q "$ZIP" -d extracted/
-            ROOT=$(find extracted/ -maxdepth 3 -name "build.gradle" ! -path "*/app/*" | head -1 | xargs dirname)
-            echo "Project root: $ROOT"
-            echo "PROJECT_DIR=$GITHUB_WORKSPACE/$ROOT" >> "$GITHUB_ENV"
-          fi
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
+          cache: gradle
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Make gradlew executable
-        run: chmod +x "$PROJECT_DIR/gradlew"
+      - name: Grant gradlew permission
+        run: chmod +x gradlew
 
-      - name: Cache Gradle packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/gradle-wrapper.properties') }}
-          restore-keys: ${{ runner.os }}-gradle-
-
-      # ── Decode the release keystore from a GitHub Secret ──
-      # Required secrets (Settings → Secrets and variables → Actions):
-      #   SMIZO_KEYSTORE_BASE64   - your .jks/.keystore file, base64-encoded
-      #   SMIZO_KEYSTORE_PASSWORD - keystore password
-      #   SMIZO_KEY_ALIAS         - key alias inside the keystore
-      #   SMIZO_KEY_PASSWORD      - key password (often same as keystore password)
-      #
-      # Don't have a keystore yet? Generate one locally with:
-      #   keytool -genkeypair -v -keystore smizo-release.jks -alias smizo \
-      #     -keyalg RSA -keysize 2048 -validity 10000
-      # Then base64-encode it for the secret:
-      #   base64 -w0 smizo-release.jks > smizo-release.b64.txt
-      - name: Decode keystore
-        env:
-          SMIZO_KEYSTORE_BASE64: ${{ secrets.SMIZO_KEYSTORE_BASE64 }}
+      - name: Decode Keystore from secret
         run: |
-          if [ -n "$SMIZO_KEYSTORE_BASE64" ]; then
-            echo "$SMIZO_KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/smizo-release.jks"
-          else
-            echo "⚠️  No SMIZO_KEYSTORE_BASE64 secret set."
-            echo "    assembleRelease will fail without a signing config."
-            echo "    See the comment above this step for keystore setup."
-          fi
-
-      - name: Build Debug APK
-        run: |
-          cd "$PROJECT_DIR"
-          ./gradlew assembleDebug --stacktrace
-
-      - name: Upload Debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: Smizo-debug-apk
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 30
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > /tmp/smizo_keystore.jks
+          echo "Keystore decoded: $(ls -lh /tmp/smizo_keystore.jks)"
 
       - name: Build Release APK
-        if: ${{ secrets.SMIZO_KEYSTORE_BASE64 != '' }}
         env:
-          SMIZO_KEYSTORE_PATH: ${{ github.workspace }}/smizo-release.jks
-          SMIZO_KEYSTORE_PASSWORD: ${{ secrets.SMIZO_KEYSTORE_PASSWORD }}
-          SMIZO_KEY_ALIAS: ${{ secrets.SMIZO_KEY_ALIAS }}
-          SMIZO_KEY_PASSWORD: ${{ secrets.SMIZO_KEY_PASSWORD }}
+          SMIZO_KEYSTORE_PATH: /tmp/smizo_keystore.jks
+          SMIZO_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          SMIZO_KEY_ALIAS:         ${{ secrets.KEY_ALIAS }}
+          SMIZO_KEY_PASSWORD:      ${{ secrets.KEY_PASSWORD }}
         run: |
-          cd "$PROJECT_DIR"
-          ./gradlew assembleRelease --stacktrace
+          ./gradlew assembleRelease \
+            --no-daemon \
+            --stacktrace \
+            -Dorg.gradle.jvmargs="-Xmx2g"
 
-      - name: Upload Release APK
-        if: ${{ secrets.SMIZO_KEYSTORE_BASE64 != '' }}
+      - name: Rename APK
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/release/app-release.apk out/Smizo-v25-release.apk
+          echo "APK size: $(ls -lh out/Smizo-v25-release.apk)"
+
+      - name: Upload APK as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Smizo-release-apk
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/release/app-release.apk
-          retention-days: 30
+          name: Smizo-v25-release-apk
+          path: out/Smizo-v25-release.apk
+          retention-days: 60
 
-      - name: Build success
-        run: echo "✅ Smizo APK build finished!"
+      - name: Create GitHub Release
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v25.0
+          name: "Smizo v25.0 — Ultimate Live TV"
+          body: |
+            ## Smizo v25.0
+            - ⚡ Faster stream loading (low-network optimised)
+            - 📺 Telegram-style navigation
+            - ⚽ FIFA World Cup 2026 tab
+            - 🚫 PiP removed completely
+            - 📦 App size 5.8MB+
+            - 🔄 Auto retry + server switching
+          files: out/Smizo-v25-release.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
