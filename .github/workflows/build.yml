@@ -22,12 +22,28 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Grant gradlew permission
-        run: chmod +x gradlew
+      - name: Install Gradle wrapper if missing
+        run: |
+          if [ ! -f "gradlew" ]; then
+            echo "gradlew not found — generating with Gradle 8.2"
+            wget -q https://services.gradle.org/distributions/gradle-8.2-bin.zip -O /tmp/gradle.zip
+            unzip -q /tmp/gradle.zip -d /tmp/gradle-install
+            /tmp/gradle-install/gradle-8.2/bin/gradle wrapper --gradle-version 8.2
+          fi
+          chmod +x gradlew
+          echo "gradlew ready"
+
+      - name: Show repo structure
+        run: |
+          echo "=== Root files ==="
+          ls -la
+          echo "=== App files ==="
+          ls -la app/ || echo "no app dir"
 
       - name: Decode Keystore from secret
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > /tmp/smizo_keystore.jks
+          echo "Keystore size: $(ls -lh /tmp/smizo_keystore.jks)"
 
       - name: Build Release APK
         env:
